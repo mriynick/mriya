@@ -1,0 +1,1 @@
+(($1>0 AND p.avtor_id=$1) OR COALESCE(p.vidimist,'publichno')='publichno' OR ($1>0 AND p.vidimist='misto' AND btrim(COALESCE(p.misto,''))<>'' AND EXISTS(SELECT 1 FROM public.useri v WHERE v.id=$1 AND lower(btrim(COALESCE(v.misto,'')))=lower(btrim(p.misto)))))
