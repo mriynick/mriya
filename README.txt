@@ -12,3 +12,75 @@
 якщо вам ці речі з поштою не потрібні у бекенді закоментуйте частину з підтвердженням пошти або автоматично після реєстрації підтверджуйте акаунт
 
 як підняти свій форк. спочатку postgres і створена база, потім заповнений env файл. далі в backend збірка go build і запуск бінарника, він підніме http сервер. в frontend npm install і npm run build, отриманий dist віддаєш будь-яким статичним сервером і проксуєш запити на бекенд. rust сервіс збирається через cargo build і читає database.url
+
+що треба на машині?? postgres 16 або новіший, go 1.26 або новіший, node 20.19 або новіший, rust з cargo, openssl. на ubuntu і debian це sudo apt install postgresql nodejs npm rustc cargo openssl, go краще взяти з go.dev, бо в apt він старший, хоча він і сам стягне потрібний тулчейн, якщо мережа відкрита. на fedora це sudo dnf install postgresql-server nodejs golang rust cargo openssl
+
+база створюється з порожнього дампа структури, він лежить у корені репо, і виконувати його треба від юзера postgres, бо там є CREATE EXTENSION pgcrypto
+
+git clone https://github.com/mriynick/mriya
+cd mriya
+cp schema.sql /tmp/schema.sql
+chmod 644 /tmp/schema.sql
+sudo -u postgres createdb mriya
+sudo -u postgres psql -d mriya -f /tmp/schema.sql
+
+якщо psql кине помилку про role або peer authentication, значить у вашій системі інакше налаштований вхід у postgres, тоді створіть базу і роль так, як ви це робите зазвичай, і просто виконайте файл схеми від імені суперюзера
+
+env файл. бекенд не вміє сам читати .env, він бере все через os.Getenv, тому файл треба або експортувати в сесію перед запуском, або покласти в systemd як EnvironmentFile
+
+cp .env.example .env
+
+далі заповнити MRIYA_DSN своєю адресою бази, MRIYA_SMTP_HOST, MRIYA_SMTP_USER і MRIYA_SMTP_PASS своїм поштовим сервером, якщо хочете, щоб коди підтвердження приходили листами. MRIYA_SESSION_KEY згенерувати так
+
+openssl rand -hex 32
+
+ключ акаунтів. main.go читає MRIYA_AUTH_KEY_FILE, а якщо змінної немає, шукає файл .mriya-auth-key поруч з бінарником. Файл має бути рівно 64 байти і з правами 600, інакше бекенд відмовиться стартувати
+
+cd backend
+openssl rand 64 > .mriya-auth-key
+chmod 600 .mriya-auth-key
+cd ..
+
+збірка бекенда. перша збірка тягне модулі з мережі, далі все з кешу
+
+cd backend
+go build -o mriya main.go
+cd ..
+
+збірка фронту. prebuild сам згенерує списки емодзі й стикерів, тому нічого додатково запускати не треба. готовий dist треба покласти туди, звідки стартує бінарник, бо бекенд віддає статику з відносної папки ./dist і сам закриває собою і api, і фронт, окремий веб-сервер не потрібен
+
+cd frontend
+npm install
+npm run build
+cp -r dist ../backend/dist
+cd ..
+
+директорії, які в коді прописані як сталі. для форка їх треба або створити, або поміняти константи в main.go
+
+sudo mkdir -p /opt/mriya/backend/strichka /opt/mriya/backend/profile-music /opt/mriya/backend/music-files /opt/mriya/backend/video-files /opt/mriya/frontend/public/frames
+sudo cp -r frontend/public/frames/. /opt/mriya/frontend/public/frames/
+sudo chown -R $USER /opt/mriya/backend
+
+рядок 991 у main.go це сокет стрічки, 1566 це рамки аватарок, 1606 це музика в профілі, 3180 музичні файли, 4450 відеофайли, 3104 це зовнішній бінар mriya-hosting-link, якого в репо немає, тому хостинг-посилання у форку працювати не будуть, поки ви не напишете свій
+
+стрічка. це окремий rust-сервіс, він читає файл database.url у своїй папці і слухає той самий сокет, який прописаний у main.go
+
+cd rust
+nano database.url
+cargo build --release
+./target/release/strichka &
+cd ..
+
+якщо стрічку не піднімати, сайт працює, але запити до стрічки віддадуть 503
+
+запуск. з папки backend, з експортованим env
+
+cd backend
+set -a
+. ../.env
+set +a
+./mriya
+
+у консолі буде рядок запуск :8080, порт в коді сталий, тож сайт буде на http://localhost:8080. файли, які завантажують користувачі, лягають у dist/uploads, тому цю папку варто берегти між збірками фронту, інакше npm run build її перезапише
+
+корисно знати. частина логіки живе не в main.go, а в тригерах бази, там ліміти учасників спільноти, лічильники коментарів, статистика відео і заборона міняти власника спільноти без підтвердження через current_setting mriya.transfer_community. тому форк без schema.sql поводитиметься не так, як прод сайтуууурекреоеноекоеоко
